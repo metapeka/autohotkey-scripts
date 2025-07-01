@@ -1,80 +1,118 @@
 #Requires AutoHotkey v2.0
 ; ConfigManager.ahk - Менеджер конфигурации
 ; Кодировка: UTF-8 with BOM
-; Версия: 1.0.1
+; Версия: 1.0.0
 ; Дата создания: 2025-01-07
-; Последнее изменение: 2025-01-07 - Добавлена поддержка логгера
+; Последнее изменение: 2025-01-07
 
 class ConfigManager {
     __New() {
-        this.SettingsFile := "settings.ini"
-        this.Logger := {}  ; Будет установлен после инициализации
+        this.ConfigFile := A_ScriptDir . "\settings.ini"
+        this.MinDelay := 1000
+        this.MaxDelay := 3000
+        this.LogFile := A_ScriptDir . "\log.txt"
+        this.ErrorLogFile := A_ScriptDir . "\error_log.txt"
+        this.StatsFile := A_ScriptDir . "\stats.txt"
+        this.Logger := ""
+        
+        ; Создаем файл конфигурации, если он не существует
+        if !FileExist(this.ConfigFile) {
+            this.CreateDefaultSettings()
+        }
+        
+        ; Загружаем настройки
         this.LoadSettings()
     }
     
-    ; Установка логгера
+    ; Установка логгера для сообщений об ошибках
     SetLogger(Logger) {
         this.Logger := Logger
     }
     
-    LoadSettings() {
-        ; Создание файла настроек с значениями по умолчанию, если он отсутствует
-        if !FileExist(this.SettingsFile) {
-            this.CreateDefaultSettings()
-        }
-        
-        ; Загрузка настроек
-        this.MinDelay := IniRead(this.SettingsFile, "Delays", "MinDelay", 1000)
-        this.MaxDelay := IniRead(this.SettingsFile, "Delays", "MaxDelay", 1500)
-        this.LogFile := IniRead(this.SettingsFile, "Settings", "LogFile", "TwitchChatLog.txt")
-        this.ErrorLogFile := IniRead(this.SettingsFile, "Settings", "ErrorLogFile", "errors.log")
-        this.StatsFile := IniRead(this.SettingsFile, "Settings", "StatsFile", "stats.txt")
-        
-        ; Валидация настроек
-        this.ValidateSettings()
-    }
-    
+    ; Создание файла настроек по умолчанию
     CreateDefaultSettings() {
-        IniWrite(1000, this.SettingsFile, "Delays", "MinDelay")
-        IniWrite(1500, this.SettingsFile, "Delays", "MaxDelay")
-        IniWrite("TwitchChatLog.txt", this.SettingsFile, "Settings", "LogFile")
-        IniWrite("errors.log", this.SettingsFile, "Settings", "ErrorLogFile")
-        IniWrite("stats.txt", this.SettingsFile, "Settings", "StatsFile")
-    }
-    
-    ValidateSettings() {
-        ; Валидация задержек
-        if (!IsInteger(this.MinDelay) || !IsInteger(this.MaxDelay) || 
-            this.MinDelay < 1 || this.MaxDelay < 1 || this.MinDelay > this.MaxDelay) {
-            this.MinDelay := 1000
-            this.MaxDelay := 1500
-            IniWrite(this.MinDelay, this.SettingsFile, "Delays", "MinDelay")
-            IniWrite(this.MaxDelay, this.SettingsFile, "Delays", "MaxDelay")
-            
-            ; Логируем ошибку, если логгер доступен
-            if (IsObject(this.Logger) && this.Logger.HasMethod("LogError")) {
-                this.Logger.LogError("Ошибка: Некорректные значения задержек, использованы значения по умолчанию")
-            }
-        }
-        
-        ; Валидация имени файла статистики
-        if (this.StatsFile = "" || !RegExMatch(this.StatsFile, "^[\w\-]+\.txt$")) {
-            oldStatsFile := this.StatsFile
-            this.StatsFile := "stats.txt"
-            IniWrite(this.StatsFile, this.SettingsFile, "Settings", "StatsFile")
-            
-            ; Логируем предупреждение, если логгер доступен
-            if (IsObject(this.Logger) && this.Logger.HasMethod("LogError")) {
-                this.Logger.LogError("Предупреждение: Некорректное имя файла статистики '" . oldStatsFile . "', используется по умолчанию: stats.txt")
+        try {
+            IniWrite(this.MinDelay, this.ConfigFile, "Delays", "MinDelay")
+            IniWrite(this.MaxDelay, this.ConfigFile, "Delays", "MaxDelay")
+            IniWrite(this.LogFile, this.ConfigFile, "Logging", "LogFile")
+            IniWrite(this.ErrorLogFile, this.ConfigFile, "Logging", "ErrorLogFile")
+            IniWrite(this.StatsFile, this.ConfigFile, "Logging", "StatsFile")
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при создании настроек по умолчанию: " . e.Message)
             }
         }
     }
     
-    SaveSetting(Section, Key, Value) {
-        IniWrite(Value, this.SettingsFile, Section, Key)
-        this.LoadSettings() ; Перезагрузка настроек
+    ; Загрузка настроек из файла
+    LoadSettings() {
+        try {
+            ; Загружаем задержки
+            this.MinDelay := this.ReadIniInt("Delays", "MinDelay", 1000)
+            this.MaxDelay := this.ReadIniInt("Delays", "MaxDelay", 3000)
+            
+            ; Проверяем корректность задержек
+            if (this.MinDelay < 100) {
+                this.MinDelay := 100
+                IniWrite(this.MinDelay, this.ConfigFile, "Delays", "MinDelay")
+            }
+            
+            if (this.MaxDelay < this.MinDelay) {
+                this.MaxDelay := this.MinDelay + 1000
+                IniWrite(this.MaxDelay, this.ConfigFile, "Delays", "MaxDelay")
+            }
+            
+            ; Загружаем пути к файлам логов
+            this.LogFile := this.ReadIniString("Logging", "LogFile", A_ScriptDir . "\log.txt")
+            this.ErrorLogFile := this.ReadIniString("Logging", "ErrorLogFile", A_ScriptDir . "\error_log.txt")
+            this.StatsFile := this.ReadIniString("Logging", "StatsFile", A_ScriptDir . "\stats.txt")
+            
+            return true
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при загрузке настроек: " . e.Message)
+            }
+            return false
+        }
     }
     
+    ; Сохранение настроек в файл
+    SaveSettings() {
+        try {
+            IniWrite(this.MinDelay, this.ConfigFile, "Delays", "MinDelay")
+            IniWrite(this.MaxDelay, this.ConfigFile, "Delays", "MaxDelay")
+            IniWrite(this.LogFile, this.ConfigFile, "Logging", "LogFile")
+            IniWrite(this.ErrorLogFile, this.ConfigFile, "Logging", "ErrorLogFile")
+            IniWrite(this.StatsFile, this.ConfigFile, "Logging", "StatsFile")
+            return true
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при сохранении настроек: " . e.Message)
+            }
+            return false
+        }
+    }
+    
+    ; Чтение целого числа из INI файла
+    ReadIniInt(Section, Key, DefaultValue) {
+        try {
+            Value := IniRead(this.ConfigFile, Section, Key, DefaultValue)
+            return Integer(Value)
+        } catch {
+            return DefaultValue
+        }
+    }
+    
+    ; Чтение строки из INI файла
+    ReadIniString(Section, Key, DefaultValue) {
+        try {
+            return IniRead(this.ConfigFile, Section, Key, DefaultValue)
+        } catch {
+            return DefaultValue
+        }
+    }
+    
+    ; Получение случайной задержки
     GetRandomDelay() {
         return Random(this.MinDelay, this.MaxDelay)
     }
