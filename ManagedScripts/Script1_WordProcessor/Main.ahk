@@ -1,196 +1,226 @@
 #Requires AutoHotkey v2.0
-; Main.ahk - Главный модуль
+; Main.ahk - Главный файл приложения для обработки слов
 ; Кодировка: UTF-8 with BOM
-; Версия: 1.1.0
+; Версия: 1.0.0
 ; Дата создания: 2025-01-07
-; Последнее изменение: 2025-01-07 - Добавлена поддержка IPC
+; Последнее изменение: 2025-01-07
 
-#SingleInstance Force
-Persistent
+; Включаем строгий режим
+#Warn All, StdOut
 
-; Функция для записи критических ошибок до инициализации Logger
-LogCriticalError(ErrorMessage) {
-    try {
-        ErrorFile := "errors.log"
-        FormattedTime := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-        ErrorEntry := "[" . FormattedTime . "]: " . ErrorMessage . "`n"
-        
-        FileAppend(ErrorEntry, ErrorFile, "UTF-8")
-    } catch {
-        ; Игнорируем ошибки записи
-    }
-}
+; Подключаем основные модули
+#Include "VersionManager.ahk"
+#Include "ConfigManager.ahk"
+#Include "FileManager.ahk"
+#Include "Logger.ahk"
+#Include "UIHelper.ahk"
+#Include "WordProcessor.ahk"
+#Include "HotkeyManager.ahk"
 
-; Загрузка модулей с обработкой ошибок
-try {
-    #Include "VersionManager.ahk"
-} catch as e {
-    LogCriticalError("Не удалось загрузить VersionManager.ahk: " . e.Message)
-    MsgBox("Критическая ошибка: Не удалось загрузить VersionManager.ahk", "Ошибка", 16)
-    ExitApp
-}
-
-try {
-    #Include "ConfigManager.ahk"
-    #Include "FileManager.ahk"
-    #Include "Logger.ahk"
-    #Include "UIHelper.ahk"
-    #Include "WordProcessor.ahk"
-    #Include "HotkeyManager.ahk"
-} catch as e {
-    LogCriticalError("Не удалось загрузить модули: " . e.Message)
-    MsgBox("Критическая ошибка: Не удалось загрузить необходимые модули", "Ошибка", 16)
-    ExitApp
-}
-
-; Загрузка модулей IPC (всегда загружаем, но используем по условию)
-#Include "..\..\Shared\JSONHelper.ahk"
-#Include "..\..\Shared\IPCProtocol.ahk"
-#Include "..\..\Shared\CommandDefinitions.ahk"
+; Подключаем модули для IPC
+#Include "IPC\JSONHelper.ahk"
+#Include "IPC\IPCProtocol.ahk"
+#Include "IPC\CommandDefinitions.ahk"
 #Include "IPC\IPCListener.ahk"
 #Include "IPC\CommandHandler.ahk"
 #Include "IPC\StatusReporter.ahk"
 #Include "IPC\IPCConfig.ahk"
 
-; Глобальные переменные
-global Config := {}
-global FileMan := {}
-global Logger := {}
-global UI := {}
-global WordProc := {}
-global HotkeyMan := {}
+; Глобальные переменные для хранения объектов
+global versionManager := ""
+global configManager := ""
+global fileManager := ""
+global logger := ""
+global ui := ""
+global wordProcessor := ""
+global hotkeyManager := ""
 
-; IPC компоненты
-global IPCListener := {}
-global CommandHandler := {}
-global StatusReporter := {}
-global UseIPC := false
+; Глобальные переменные для IPC
+global ipcConfig := ""
+global commandHandler := ""
+global statusReporter := ""
+global ipcListener := ""
+
+; Функция для логирования критических ошибок на ранних этапах
+LogCriticalError(ErrorMessage) {
+    try {
+        FileAppend("[" . A_Now . "] КРИТИЧЕСКАЯ ОШИБКА: " . ErrorMessage . "`n", "critical_errors.log", "UTF-8")
+    } catch {
+        ; Ничего не делаем, если не удалось записать в файл
+    }
+    
+    MsgBox("Критическая ошибка: " . ErrorMessage, "Ошибка", 16)
+    ExitApp
+}
 
 ; Инициализация приложения
-InitializeApp()
-
 InitializeApp() {
-    global Config, FileMan, Logger, UI, WordProc, HotkeyMan
-    global IPCListener, CommandHandler, StatusReporter, UseIPC
-    
+    ; Инициализируем менеджер версий
     try {
-        ; Проверяем режим запуска
-        UseIPC := (A_Args.Length > 0 && A_Args[1] = "/IPC")
-        
-        ; Инициализация модулей
-        Config := ConfigManager()
-        FileMan := FileManager()
-        Logger := LoggerModule(Config)
-        
-        ; Передаем логгер в модули, которым он нужен
-        Config.SetLogger(Logger)
-        Config.ValidateSettings()  ; Повторная валидация с логированием
-        
-        UI := UIHelper()
-        UI.SetLogger(Logger)  ; Передаем логгер в UI
-        WordProc := WordProcessor(Config, FileMan, Logger, UI)
-        HotkeyMan := HotkeyManager(Config, WordProc, FileMan, Logger, UI)
-        
-        ; Логирование запуска
-        Logger.Log("Приложение запущено" . (UseIPC ? " в режиме IPC" : ""))
-        
-        ; Инициализация IPC если нужно
-        if (UseIPC) {
-            InitializeIPC()
-        }
-        
-        ; Проверка наличия модулей
-        MissingModules := VersionManager.CheckModulesExistence()
-        if (MissingModules.Length > 0) {
-            Logger.LogError("Отсутствуют модули: " . MissingModules.Join(", "))
-        }
-        
-        ; Проверка версий модулей
-        VersionCheck := VersionManager.CheckVersionConsistency()
-        if (VersionCheck.Length > 0) {
-            Logger.LogError("Обнаружены несоответствия версий в " . VersionCheck.Length . " модулях")
-        }
-        
-        ; Сохранение информации о версиях
-        VersionManager.SaveVersionInfo()
-        
-        ; Инициализация горячих клавиш
-        HotkeyMan.Initialize()
-        
-    } catch as e {
-        ; Пытаемся залогировать ошибку, если Logger уже создан
-        if (IsObject(Logger) && Logger.HasMethod("LogError")) {
-            Logger.LogError("Ошибка инициализации: " . e.Message . " в строке " . e.Line)
-        } else {
-            ; Если Logger не создан, пишем в файл напрямую
-            try {
-                ErrorFile := "errors.log"
-                FormattedTime := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-                ErrorEntry := "[" . FormattedTime . "]: Критическая ошибка инициализации: " . e.Message . " в строке " . e.Line . "`n"
-                
-                ; Пытаемся записать напрямую
-                if (FileExist(ErrorFile)) {
-                    FileAppend(ErrorEntry, ErrorFile, "UTF-8")
-                } else {
-                    FileAppend(ErrorEntry, ErrorFile, "UTF-8")
-                }
-            } catch {
-                ; Если и это не удалось, просто показываем сообщение
-            }
-        }
-        
-        MsgBox("Ошибка инициализации: " . e.Message . "`nСтрока: " . e.Line, "Критическая ошибка", 16)
-        ExitApp
+        versionManager := VersionManager("Word Processor", "1.0.0", "2025-01-07")
+    } catch Error as e {
+        LogCriticalError("Не удалось инициализировать менеджер версий: " . e.Message)
+        return false
     }
+    
+    ; Инициализируем менеджер конфигурации
+    try {
+        configManager := ConfigManager("settings.ini")
+        configManager.LoadConfig()
+    } catch Error as e {
+        LogCriticalError("Не удалось инициализировать менеджер конфигурации: " . e.Message)
+        return false
+    }
+    
+    ; Инициализируем менеджер файлов
+    try {
+        fileManager := FileManager()
+    } catch Error as e {
+        LogCriticalError("Не удалось инициализировать менеджер файлов: " . e.Message)
+        return false
+    }
+    
+    ; Инициализируем логгер
+    try {
+        logger := LoggerModule(fileManager, configManager)
+    } catch Error as e {
+        LogCriticalError("Не удалось инициализировать логгер: " . e.Message)
+        return false
+    }
+    
+    ; Устанавливаем логгер для менеджера конфигурации
+    configManager.SetLogger(logger)
+    
+    ; Инициализируем UI
+    try {
+        ui := UIHelper()
+        ui.SetLogger(logger)
+    } catch Error as e {
+        LogCriticalError("Не удалось инициализировать UI: " . e.Message)
+        return false
+    }
+    
+    ; Инициализируем процессор слов
+    try {
+        wordProcessor := WordProcessor(configManager, fileManager, logger, ui)
+    } catch Error as e {
+        LogCriticalError("Не удалось инициализировать процессор слов: " . e.Message)
+        return false
+    }
+    
+    ; Инициализируем менеджер горячих клавиш
+    try {
+        hotkeyManager := HotkeyManager(wordProcessor, ui, logger)
+        hotkeyManager.InitializeHotkeys()
+    } catch Error as e {
+        LogCriticalError("Не удалось инициализировать менеджер горячих клавиш: " . e.Message)
+        return false
+    }
+    
+    ; Проверяем наличие всех необходимых модулей
+    if (!versionManager || !configManager || !fileManager || !logger || !ui || !wordProcessor || !hotkeyManager) {
+        LogCriticalError("Не все модули были успешно инициализированы")
+        return false
+    }
+    
+    ; Проверяем согласованность версий модулей
+    if (!versionManager.CheckModuleVersions()) {
+        LogCriticalError("Обнаружено несоответствие версий модулей")
+        return false
+    }
+    
+    ; Сохраняем информацию о версии
+    versionManager.SaveVersionInfo()
+    
+    ; Логируем успешную инициализацию
+    logger.Log("Приложение успешно инициализировано")
+    
+    ; Инициализируем IPC, если необходимо
+    InitializeIPC()
+    
+    return true
 }
 
-; Инициализация IPC компонентов
+; Инициализация IPC
 InitializeIPC() {
-    global IPCListener, CommandHandler, StatusReporter, UseIPC
-    global Config, FileMan, Logger, UI, WordProc
-    
+    ; Инициализируем конфигурацию IPC
     try {
-        ; Загружаем конфигурацию IPC
-        IPCConfig.LoadFromINI()
-        
-        if (!IPCConfig.ENABLE_IPC) {
-            Logger.Log("IPC отключен в настройках")
-            return
-        }
-        
-        ; Создаем компоненты IPC
-        CommandHandler := CommandHandler(WordProc, FileMan, Logger, Config, UI)
-        StatusReporter := StatusReporter("WordProcessor")
-        IPCListener := IPCListener("WordProcessor")
-        
-        ; Инициализируем слушатель
-        IPCListener.Initialize(CommandHandler, StatusReporter)
-        
-        Logger.Log("IPC компоненты инициализированы")
-        
-    } catch as e {
-        Logger.LogError("Ошибка инициализации IPC: " . e.Message)
-        ; Продолжаем работу без IPC
-        UseIPC := false
+        ipcConfig := IPCConfig("ipc_settings.ini", logger)
+        ipcConfig.LoadConfig()
+    } catch Error as e {
+        logger.LogError("Не удалось инициализировать конфигурацию IPC: " . e.Message)
+        return false
+    }
+    
+    ; Если IPC отключен, выходим
+    if (!ipcConfig.IPCEnabled) {
+        logger.Log("IPC отключен в настройках")
+        return true
+    }
+    
+    ; Инициализируем обработчик команд
+    try {
+        commandHandler := CommandHandler(wordProcessor, logger)
+    } catch Error as e {
+        logger.LogError("Не удалось инициализировать обработчик команд: " . e.Message)
+        return false
+    }
+    
+    ; Инициализируем репортер статуса
+    try {
+        statusReporter := StatusReporter(ipcConfig.MainControllerName, logger)
+        statusReporter.SetReportInterval(ipcConfig.StatusReportInterval)
+        statusReporter.EnableReporting()
+    } catch Error as e {
+        logger.LogError("Не удалось инициализировать репортер статуса: " . e.Message)
+        return false
+    }
+    
+    ; Устанавливаем репортер статуса для обработчика команд
+    commandHandler._statusReporter := statusReporter
+    
+    ; Инициализируем слушатель IPC
+    try {
+        ipcListener := IPCListener(commandHandler, logger)
+        ipcListener.StartListening()
+    } catch Error as e {
+        logger.LogError("Не удалось инициализировать слушатель IPC: " . e.Message)
+        return false
+    }
+    
+    logger.Log("IPC успешно инициализирован")
+    return true
+}
+
+; Обработчик выхода из приложения
+OnExit(*) {
+    ; Останавливаем компоненты IPC, если они активны
+    if (ipcListener && ipcListener.IsListening()) {
+        ipcListener.StopListening()
+    }
+    
+    if (statusReporter) {
+        statusReporter.DisableReporting()
+    }
+    
+    ; Логируем выход из приложения
+    if (logger) {
+        logger.Log("Приложение завершает работу")
     }
 }
 
-; Обработка закрытия программы
-OnExit(ExitHandler)
-
-ExitHandler(*) {
-    global IPCListener, StatusReporter, UseIPC
-    
-    ; Останавливаем IPC если активен
-    if (UseIPC) {
-        if (IsObject(IPCListener)) {
-            IPCListener.Stop()
-        }
-        
-        if (IsObject(StatusReporter)) {
-            StatusReporter.EnableReporting(false)
-        }
-    }
-    
+; Инициализируем приложение
+if (!InitializeApp()) {
     ExitApp
+}
+
+; Показываем сообщение о запуске
+ui.ShowTrayTip("Приложение запущено", "Используйте F1 для начала обработки слов, F2 для восстановления файлов, F3 для справки, Escape для выхода")
+
+; Устанавливаем обработчик выхода
+OnExit(OnExit)
+
+; Запускаем бесконечный цикл для поддержания скрипта активным
+Loop {
+    Sleep(1000)
 }
