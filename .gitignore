@@ -1,0 +1,27 @@
+# Logs
+Logs/
+*.log
+
+# Debug files
+*.txt
+path_debug.txt
+run_debug.txt
+test_ipc_log.txt
+ipc_test_log.txt
+
+# Compiled AutoHotkey scripts
+*.exe
+*.dll
+*.bin
+
+# Windows system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
