@@ -16,14 +16,11 @@ class Commands {
     static PAUSE_RESUME := "PAUSE_RESUME"           ; Пауза/возобновление
     static RESTORE_FILES := "RESTORE_FILES"         ; Восстановить файлы
     static GET_STATS := "GET_STATS"                 ; Получить статистику
-    static RELOAD_CONFIG := "RELOAD_CONFIG"         ; Перезагрузить конфигурацию
-    static SET_DELAY := "SET_DELAY"                 ; Установить задержку
     
     ; === Статусы ответов ===
-    static STATUS_SUCCESS := "SUCCESS"
-    static STATUS_ERROR := "ERROR"
-    static STATUS_PROCESSING := "PROCESSING"
-    static STATUS_UNKNOWN := "UNKNOWN"
+    static STATUS_SUCCESS := "SUCCESS"      ; Успешно
+    static STATUS_ERROR := "ERROR"          ; Ошибка
+    static STATUS_UNKNOWN := "UNKNOWN"      ; Неизвестно
     
     ; === Состояния скриптов ===
     static STATE_IDLE := "idle"                 ; Ожидание
@@ -38,32 +35,29 @@ class CommandValidator {
     ; Проверка валидности команды
     static IsValidCommand(Command) {
         ; Проверяем обязательные поля
-        if (!Command.HasProp("id") || !Command.HasProp("command")) {
-            return false
+        if (!Command.HasProp("commandId") || !Command.HasProp("command")) {
+            return {Valid: false, Error: "Отсутствуют обязательные поля"}
         }
         
-        ; Проверяем, что команда известна
-        KnownCommands := [
-            Commands.SHUTDOWN,
-            Commands.GET_STATUS,
-            Commands.GET_INFO,
-            Commands.PING,
-            Commands.START_PROCESSING,
-            Commands.STOP_PROCESSING,
-            Commands.PAUSE_RESUME,
-            Commands.RESTORE_FILES,
-            Commands.GET_STATS,
-            Commands.RELOAD_CONFIG,
-            Commands.SET_DELAY
-        ]
+        ; Проверяем известность команды
+        if (!this.IsKnownCommand(Command.command)) {
+            return {Valid: false, Error: "Неизвестная команда: " . Command.command}
+        }
         
-        for KnownCmd in KnownCommands {
-            if (Command.command = KnownCmd) {
+        ; Проверяем параметры команды
+        return this.ValidateParams(Command)
+    }
+    
+    ; Проверка известности команды
+    static IsKnownCommand(CommandName) {
+        switch CommandName {
+            case Commands.SHUTDOWN, Commands.GET_STATUS, Commands.GET_INFO, Commands.PING,
+                 Commands.START_PROCESSING, Commands.STOP_PROCESSING, Commands.PAUSE_RESUME,
+                 Commands.RESTORE_FILES, Commands.GET_STATS:
                 return true
-            }
+            default:
+                return false
         }
-        
-        return false
     }
     
     ; Проверка параметров команды
@@ -79,60 +73,55 @@ class CommandValidator {
                     return {Valid: false, Error: "loopCount должен быть целым числом > 0"}
                 }
                 
-            case Commands.SET_DELAY:
-                ; Требуются minDelay и maxDelay
-                if (!Command.HasProp("params") || 
-                    !Command.params.HasProp("minDelay") || 
-                    !Command.params.HasProp("maxDelay")) {
-                    return {Valid: false, Error: "Отсутствуют параметры задержки"}
-                }
+                return {Valid: true}
+                
+            case Commands.SHUTDOWN, Commands.GET_STATUS, Commands.GET_INFO, Commands.PING,
+                 Commands.STOP_PROCESSING, Commands.PAUSE_RESUME, Commands.RESTORE_FILES,
+                 Commands.GET_STATS:
+                ; Для этих команд параметры не требуются
+                return {Valid: true}
+                
+            default:
+                return {Valid: false, Error: "Неизвестная команда: " . Command.command}
         }
-        
-        return {Valid: true}
     }
 }
 
-; Создание стандартных ответов
+; Построитель ответов
 class ResponseBuilder {
-    ; Успешный ответ
-    static Success(CommandId, Message := "", Data := {}) {
+    ; Создание успешного ответа
+    static CreateSuccessResponse(CommandId, Data := "") {
         Response := {
-            id: CommandId,
-            status: Commands.STATUS_SUCCESS,
-            timestamp: A_Now
+            commandId: CommandId,
+            status: Commands.STATUS_SUCCESS
         }
         
-        if (Message != "") {
-            Response.message := Message
-        }
-        
-        if (Type(Data) = "Object" && ObjOwnPropCount(Data) > 0) {
+        if (Data) {
             Response.data := Data
         }
         
         return Response
     }
     
-    ; Ответ с ошибкой
-    static Error(CommandId, ErrorMessage) {
+    ; Создание ответа с ошибкой
+    static CreateErrorResponse(CommandId, ErrorMessage) {
         return {
-            id: CommandId,
+            commandId: CommandId,
             status: Commands.STATUS_ERROR,
-            error: ErrorMessage,
-            timestamp: A_Now
+            error: ErrorMessage
         }
     }
     
-    ; Ответ "в процессе"
-    static Processing(CommandId, Message := "") {
+    ; Создание ответа со статусом
+    static CreateStatusResponse(CommandId, State, Stats := "") {
         Response := {
-            id: CommandId,
-            status: Commands.STATUS_PROCESSING,
-            timestamp: A_Now
+            commandId: CommandId,
+            status: Commands.STATUS_SUCCESS,
+            state: State
         }
         
-        if (Message != "") {
-            Response.message := Message
+        if (Stats) {
+            Response.stats := Stats
         }
         
         return Response
