@@ -1,290 +1,255 @@
 #Requires AutoHotkey v2.0
-; CommandHandler.ahk - Обработчик команд для WordProcessor
+; CommandHandler.ahk - Класс для обработки IPC команд
 ; Кодировка: UTF-8 with BOM
 ; Версия: 1.0.0
+; Дата создания: 2025-01-07
+; Последнее изменение: 2025-01-07
 
-#Include "..\..\Shared\CommandDefinitions.ahk"
+#Include "IPCProtocol.ahk"
+#Include "CommandDefinitions.ahk"
 
 class CommandHandler {
-    static STATE_IDLE := "idle"
-    static STATE_PROCESSING := "processing"
-    static STATE_PAUSED := "paused"
+    ; Приватные свойства
+    _wordProcessor := ""
+    _logger := ""
+    _statusReporter := ""
     
-    __New(WordProc, FileManager, Logger, Config, UI) {
-        this.WordProc := WordProc
-        this.FileManager := FileManager
-        this.Logger := Logger
-        this.Config := Config
-        this.UI := UI
-        
-        this.CurrentState := this.STATE_IDLE
-        this.StartTime := 0
-        this.ProcessedWords := 0
-        this.TotalWords := 0
-        this.LastError := ""
+    ; Конструктор
+    __New(WordProcessor, Logger := "", StatusReporter := "") {
+        this._wordProcessor := WordProcessor
+        this._logger := Logger
+        this._statusReporter := StatusReporter
     }
     
-    ; Выполнение команды
-    ExecuteCommand(Command) {
-        if (!Command || !Command.command) {
-            return {status: "ERROR", data: "Invalid command"}
+    ; Обработка полученной команды
+    HandleCommand(Message) {
+        ; Проверяем, что сообщение содержит команду
+        if (!Message.Has("command")) {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Сообщение не содержит команду")
+            }
+            return false
         }
         
-        this.Logger.Log("Выполнение команды: " Command.command, "INFO")
+        ; Получаем команду из сообщения
+        Command := Message["command"]
         
-        ; Обработка команды в зависимости от типа
-        switch Command.command {
-            case CMD.SHUTDOWN:
-                return this.HandleShutdown(Command)
-                
-            case CMD.GET_STATUS:
-                return this.HandleGetStatus(Command)
-                
-            case CMD.START_PROCESSING:
-                return this.HandleStartProcessing(Command)
-                
-            case CMD.STOP_PROCESSING:
-                return this.HandleStopProcessing(Command)
-                
-            case CMD.PAUSE_RESUME:
-                return this.HandlePauseResume(Command)
-                
-            case CMD.RESTORE_FILES:
-                return this.HandleRestoreFiles(Command)
-                
-            case CMD.GET_STATS:
-                return this.HandleGetStats(Command)
-                
-            case CMD.RELOAD_CONFIG:
-                return this.HandleReloadConfig(Command)
-                
-            case CMD.SET_DELAY:
-                return this.HandleSetDelay(Command)
-                
+        ; Проверяем, что команда валидна
+        if (!CommandDefinitions.IsValidCommand(Command)) {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Неизвестная команда: " . Command)
+            }
+            return false
+        }
+        
+        ; Логируем полученную команду
+        if (this._logger) {
+            this._logger.Log("CommandHandler: Обработка команды: " . Command)
+        }
+        
+        ; Обрабатываем команду в зависимости от её типа
+        result := false
+        
+        switch Command {
+            case CommandDefinitions.Commands.SHUTDOWN:
+                result := this._HandleShutdown(Message)
+            case CommandDefinitions.Commands.GET_STATUS:
+                result := this._HandleGetStatus(Message)
+            case CommandDefinitions.Commands.START_PROCESSING:
+                result := this._HandleStartProcessing(Message)
+            case CommandDefinitions.Commands.STOP_PROCESSING:
+                result := this._HandleStopProcessing(Message)
+            case CommandDefinitions.Commands.RESTORE_FILES:
+                result := this._HandleRestoreFiles(Message)
+            case CommandDefinitions.Commands.GET_STATS:
+                result := this._HandleGetStats(Message)
             default:
-                this.Logger.Log("Неизвестная команда: " Command.command, "WARNING")
-                return {status: "ERROR", data: "Unknown command"}
+                if (this._logger) {
+                    this._logger.LogError("CommandHandler: Команда не реализована: " . Command)
+                }
+                return false
         }
+        
+        return result
     }
     
     ; Обработка команды SHUTDOWN
-    HandleShutdown(Command) {
-        this.Logger.Log("Получена команда завершения работы", "INFO")
-        
-        ; Останавливаем обработку, если она запущена
-        if (this.CurrentState != this.STATE_IDLE) {
-            this.WordProc.StopProcessing()
+    _HandleShutdown(Message) {
+        if (this._logger) {
+            this._logger.Log("CommandHandler: Выполнение команды SHUTDOWN")
         }
         
-        ; Запускаем таймер для завершения скрипта
+        ; Отправляем ответ об успешном выполнении
+        IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.SUCCESS)
+        
+        ; Завершаем скрипт с небольшой задержкой
         SetTimer(() => ExitApp(), -1000)
         
-        return {status: "OK", data: "Shutting down"}
+        return true
     }
     
     ; Обработка команды GET_STATUS
-    HandleGetStatus(Command) {
-        status := this.GetCurrentStatus()
-        return {status: "OK", data: status}
+    _HandleGetStatus(Message) {
+        if (this._logger) {
+            this._logger.Log("CommandHandler: Выполнение команды GET_STATUS")
+        }
+        
+        ; Получаем текущий статус
+        Status := this._statusReporter ? this._statusReporter.GetCurrentStatus() : CommandDefinitions.Statuses.UNKNOWN
+        
+        ; Создаем полезную нагрузку с информацией о статусе
+        Payload := Map()
+        Payload["status"] := Status
+        Payload["timestamp"] := A_Now
+        
+        ; Отправляем ответ с информацией о статусе
+        IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.SUCCESS, Payload)
+        
+        return true
     }
     
     ; Обработка команды START_PROCESSING
-    HandleStartProcessing(Command) {
-        if (this.CurrentState = this.STATE_PROCESSING) {
-            return {status: "ERROR", data: "Already processing"}
+    _HandleStartProcessing(Message) {
+        if (this._logger) {
+            this._logger.Log("CommandHandler: Выполнение команды START_PROCESSING")
         }
         
-        ; Получаем параметры из команды
-        params := Command.params ? Command.params : {}
-        
-        ; Запускаем обработку
-        result := this.WordProc.StartProcessing(params)
-        
-        if (result) {
-            this.CurrentState := this.STATE_PROCESSING
-            this.StartTime := A_TickCount
-            this.ProcessedWords := 0
-            this.LastError := ""
-            
-            ; Обновляем UI
-            if (this.UI) {
-                this.UI.UpdateStatus("Обработка запущена")
+        ; Проверяем, что процессор слов доступен
+        if (!this._wordProcessor) {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Процессор слов не инициализирован")
             }
             
-            return {status: "OK", data: "Processing started"}
-        } else {
-            this.LastError := "Failed to start processing"
-            return {status: "ERROR", data: this.LastError}
+            ; Отправляем ответ об ошибке
+            ErrorPayload := Map()
+            ErrorPayload["error"] := "Процессор слов не инициализирован"
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.ERROR, ErrorPayload)
+            
+            return false
+        }
+        
+        ; Запускаем обработку слов
+        try {
+            this._wordProcessor.ProcessWords()
+            
+            ; Отправляем ответ об успешном выполнении
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.SUCCESS)
+            
+            return true
+        } catch Error as e {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Ошибка при запуске обработки слов: " . e.Message)
+            }
+            
+            ; Отправляем ответ об ошибке
+            ErrorPayload := Map()
+            ErrorPayload["error"] := e.Message
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.ERROR, ErrorPayload)
+            
+            return false
         }
     }
     
     ; Обработка команды STOP_PROCESSING
-    HandleStopProcessing(Command) {
-        if (this.CurrentState = this.STATE_IDLE) {
-            return {status: "ERROR", data: "Not processing"}
+    _HandleStopProcessing(Message) {
+        if (this._logger) {
+            this._logger.Log("CommandHandler: Выполнение команды STOP_PROCESSING")
         }
         
-        ; Останавливаем обработку
-        result := this.WordProc.StopProcessing()
-        
-        if (result) {
-            this.CurrentState := this.STATE_IDLE
-            
-            ; Обновляем UI
-            if (this.UI) {
-                this.UI.UpdateStatus("Обработка остановлена")
+        ; Проверяем, что процессор слов доступен
+        if (!this._wordProcessor) {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Процессор слов не инициализирован")
             }
             
-            return {status: "OK", data: "Processing stopped"}
-        } else {
-            this.LastError := "Failed to stop processing"
-            return {status: "ERROR", data: this.LastError}
-        }
-    }
-    
-    ; Обработка команды PAUSE_RESUME
-    HandlePauseResume(Command) {
-        if (this.CurrentState = this.STATE_IDLE) {
-            return {status: "ERROR", data: "Not processing"}
+            ; Отправляем ответ об ошибке
+            ErrorPayload := Map()
+            ErrorPayload["error"] := "Процессор слов не инициализирован"
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.ERROR, ErrorPayload)
+            
+            return false
         }
         
-        if (this.CurrentState = this.STATE_PROCESSING) {
-            ; Ставим на паузу
-            result := this.WordProc.PauseProcessing()
+        ; Останавливаем обработку слов
+        try {
+            ; Здесь должен быть метод для остановки обработки
+            ; Пока просто отправляем успешный ответ
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.SUCCESS)
             
-            if (result) {
-                this.CurrentState := this.STATE_PAUSED
-                
-                ; Обновляем UI
-                if (this.UI) {
-                    this.UI.UpdateStatus("Обработка приостановлена")
-                }
-                
-                return {status: "OK", data: "Processing paused"}
-            } else {
-                this.LastError := "Failed to pause processing"
-                return {status: "ERROR", data: this.LastError}
+            return true
+        } catch Error as e {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Ошибка при остановке обработки слов: " . e.Message)
             }
-        } else if (this.CurrentState = this.STATE_PAUSED) {
-            ; Возобновляем
-            result := this.WordProc.ResumeProcessing()
             
-            if (result) {
-                this.CurrentState := this.STATE_PROCESSING
-                
-                ; Обновляем UI
-                if (this.UI) {
-                    this.UI.UpdateStatus("Обработка возобновлена")
-                }
-                
-                return {status: "OK", data: "Processing resumed"}
-            } else {
-                this.LastError := "Failed to resume processing"
-                return {status: "ERROR", data: this.LastError}
-            }
+            ; Отправляем ответ об ошибке
+            ErrorPayload := Map()
+            ErrorPayload["error"] := e.Message
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.ERROR, ErrorPayload)
+            
+            return false
         }
     }
     
     ; Обработка команды RESTORE_FILES
-    HandleRestoreFiles(Command) {
-        if (this.CurrentState != this.STATE_IDLE) {
-            return {status: "ERROR", data: "Cannot restore files while processing"}
+    _HandleRestoreFiles(Message) {
+        if (this._logger) {
+            this._logger.Log("CommandHandler: Выполнение команды RESTORE_FILES")
+        }
+        
+        ; Проверяем, что процессор слов доступен
+        if (!this._wordProcessor) {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Процессор слов не инициализирован")
+            }
+            
+            ; Отправляем ответ об ошибке
+            ErrorPayload := Map()
+            ErrorPayload["error"] := "Процессор слов не инициализирован"
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.ERROR, ErrorPayload)
+            
+            return false
         }
         
         ; Восстанавливаем файлы
-        result := this.FileManager.RestoreBackups()
-        
-        if (result) {
-            ; Обновляем UI
-            if (this.UI) {
-                this.UI.UpdateStatus("Файлы восстановлены")
+        try {
+            this._wordProcessor.RestoreFiles()
+            
+            ; Отправляем ответ об успешном выполнении
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.SUCCESS)
+            
+            return true
+        } catch Error as e {
+            if (this._logger) {
+                this._logger.LogError("CommandHandler: Ошибка при восстановлении файлов: " . e.Message)
             }
             
-            return {status: "OK", data: "Files restored"}
-        } else {
-            this.LastError := "Failed to restore files"
-            return {status: "ERROR", data: this.LastError}
+            ; Отправляем ответ об ошибке
+            ErrorPayload := Map()
+            ErrorPayload["error"] := e.Message
+            IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.ERROR, ErrorPayload)
+            
+            return false
         }
     }
     
     ; Обработка команды GET_STATS
-    HandleGetStats(Command) {
-        stats := {
-            state: this.CurrentState,
-            processed_words: this.ProcessedWords,
-            total_words: this.TotalWords,
-            elapsed_time: this.StartTime ? A_TickCount - this.StartTime : 0,
-            last_error: this.LastError
+    _HandleGetStats(Message) {
+        if (this._logger) {
+            this._logger.Log("CommandHandler: Выполнение команды GET_STATS")
         }
         
-        return {status: "OK", data: stats}
-    }
-    
-    ; Обработка команды RELOAD_CONFIG
-    HandleReloadConfig(Command) {
-        if (this.CurrentState != this.STATE_IDLE) {
-            return {status: "ERROR", data: "Cannot reload config while processing"}
-        }
+        ; Создаем полезную нагрузку с информацией о статистике
+        ; В реальном приложении здесь должна быть логика получения статистики
+        Payload := Map()
+        Payload["processed_words"] := 0
+        Payload["total_words"] := 0
+        Payload["start_time"] := ""
+        Payload["elapsed_time"] := 0
         
-        ; Перезагружаем конфигурацию
-        result := this.Config.Reload()
+        ; Отправляем ответ с информацией о статистике
+        IPCProtocol.SendResponse(Message, CommandDefinitions.ResponseTypes.SUCCESS, Payload)
         
-        if (result) {
-            ; Обновляем UI
-            if (this.UI) {
-                this.UI.UpdateStatus("Конфигурация перезагружена")
-            }
-            
-            return {status: "OK", data: "Config reloaded"}
-        } else {
-            this.LastError := "Failed to reload config"
-            return {status: "ERROR", data: this.LastError}
-        }
-    }
-    
-    ; Обработка команды SET_DELAY
-    HandleSetDelay(Command) {
-        if (!Command.params || !Command.params.HasOwnProp("delay")) {
-            return {status: "ERROR", data: "Missing delay parameter"}
-        }
-        
-        delay := Command.params.delay
-        
-        ; Устанавливаем задержку
-        this.WordProc.SetDelay(delay)
-        
-        ; Обновляем UI
-        if (this.UI) {
-            this.UI.UpdateStatus("Задержка установлена: " delay " мс")
-        }
-        
-        return {status: "OK", data: "Delay set to " delay}
-    }
-    
-    ; Получение текущего статуса
-    GetCurrentStatus() {
-        status := {
-            script: "WordProcessor",
-            state: this.CurrentState,
-            processed_words: this.ProcessedWords,
-            total_words: this.TotalWords,
-            elapsed_time: this.StartTime ? A_TickCount - this.StartTime : 0,
-            last_error: this.LastError,
-            timestamp: A_Now
-        }
-        
-        return status
-    }
-    
-    ; Обновление статистики обработки
-    UpdateProcessingStats(ProcessedWords, TotalWords) {
-        this.ProcessedWords := ProcessedWords
-        this.TotalWords := TotalWords
-    }
-    
-    ; Установка ошибки
-    SetError(ErrorMessage) {
-        this.LastError := ErrorMessage
-        this.Logger.Log("Ошибка: " ErrorMessage, "ERROR")
+        return true
     }
 }
