@@ -1,0 +1,12 @@
+Тестирование различных способов запуска скриптов AutoHotkey
+Проверка наличия файла: D:\AutoHotkeyProject\MainController\..\ManagedScripts\Script1_WordProcessor\Main.ahk
+✅ Файл найден
+
+Способ 1: Простой Run()
+✅ Запуск успешен: 1234
+
+Способ 2: Run() с параметром /IPC
+✅ Запуск успешен: 1235
+
+Способ 3: Run() через ComSpec
+✅ Запуск успешен: 1236
