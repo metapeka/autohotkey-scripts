@@ -1,14 +1,14 @@
 #Requires AutoHotkey v2.0
-; UIHelper.ahk - Помощник интерфейса
+; UIHelper.ahk - Вспомогательный модуль для пользовательского интерфейса
 ; Кодировка: UTF-8 with BOM
-; Версия: 1.0.1
+; Версия: 1.0.0
 ; Дата создания: 2025-01-07
-; Последнее изменение: 2025-01-07 - Добавлена поддержка логгера
+; Последнее изменение: 2025-01-07
 
 class UIHelper {
     __New() {
-        ; Инициализация
-        this.Logger := {}  ; Будет установлен после инициализации
+        this.Logger := ""
+        this.AppTitle := "Процессор слов"
     }
     
     ; Установка логгера
@@ -17,52 +17,128 @@ class UIHelper {
     }
     
     ; Показать сообщение
-    ShowMessage(Message, Title := "Информация") {
-        MsgBox(Message, Title)
+    ShowMessage(Message) {
+        try {
+            MsgBox(Message, this.AppTitle, "OK")
+            
+            if (this.Logger != "") {
+                this.Logger.Log("Показано сообщение: " . Message)
+            }
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при показе сообщения: " . e.Message)
+            }
+        }
     }
     
     ; Показать ошибку
     ShowError(ErrorMessage) {
-        MsgBox("Ошибка: " . ErrorMessage, "Ошибка", 16)
+        try {
+            MsgBox(ErrorMessage, this.AppTitle . " - Ошибка", "OK Icon!") 
+            
+            if (this.Logger != "") {
+                this.Logger.LogError("Показана ошибка: " . ErrorMessage)
+            }
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при показе ошибки: " . e.Message)
+            }
+        }
     }
     
-    ; Запросить число
-    GetNumberInput(Prompt, Title, Default := "") {
+    ; Получить числовой ввод
+    GetNumberInput(Prompt, Default := 1) {
         try {
-            Result := InputBox(Prompt, Title, "W300 H150", Default)
-            if (Result.Result = "Cancel")
-                return -1
-                
-            Value := Result.Value
-            if (!IsInteger(Value) || Value < 1) {
-                this.ShowError("Введите целое число больше 0!")
-                return -1
+            InputValue := InputBox(Prompt, this.AppTitle, "w300 h130", Default)
+            
+            if (InputValue.Result = "Cancel") {
+                if (this.Logger != "") {
+                    this.Logger.Log("Пользователь отменил ввод числа")
+                }
+                return 0
             }
-            return Integer(Value)
-        } catch {
-            return -1
+            
+            ; Проверяем, что введено число
+            if InputValue.Value is integer
+            {
+                if (this.Logger != "") {
+                    this.Logger.Log("Пользователь ввел число: " . InputValue.Value)
+                }
+                return Integer(InputValue.Value)
+            }
+            else
+            {
+                this.ShowError("Пожалуйста, введите целое число!")
+                return this.GetNumberInput(Prompt, Default)
+            }
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при получении числового ввода: " . e.Message)
+            }
+            return Default
         }
     }
     
     ; Показать уведомление в трее
-    ShowTrayTip(Title, Text, Icon := 1) {
-        TrayTip(Text, Title, Icon)
+    ShowTrayTip(Title, Message, Options := "") {
+        try {
+            TrayTip(Title, Message, Options)
+            
+            if (this.Logger != "") {
+                this.Logger.Log("Показано уведомление: " . Title . " - " . Message)
+            }
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при показе уведомления: " . e.Message)
+            }
+        }
     }
     
     ; Показать статистику завершения
     ShowCompletionStats(SentCount, LogFile) {
-        Message := "Цикл завершен! Отправлено " . SentCount . " строк.`nЛог сохранен в " . LogFile
-        this.ShowMessage(Message, "Завершено")
+        try {
+            Message := "Обработка завершена!`n`n" .
+                      "Отправлено слов: " . SentCount . "`n`n" .
+                      "Подробности записаны в лог: `n" . LogFile
+            
+            this.ShowMessage(Message)
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при показе статистики: " . e.Message)
+            }
+        }
     }
     
     ; Показать предупреждение
-    ShowWarning(Message) {
-        MsgBox(Message, "Предупреждение", 48)
+    ShowWarning(WarningMessage) {
+        try {
+            MsgBox(WarningMessage, this.AppTitle . " - Предупреждение", "OK Icon!")
+            
+            if (this.Logger != "") {
+                this.Logger.Log("Показано предупреждение: " . WarningMessage)
+            }
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при показе предупреждения: " . e.Message)
+            }
+        }
     }
     
     ; Подтверждение действия
-    ConfirmAction(Message) {
-        Result := MsgBox(Message, "Подтверждение", 4)
-        return (Result = "Yes")
+    ConfirmAction(Question) {
+        try {
+            Result := MsgBox(Question, this.AppTitle . " - Подтверждение", "YesNo Icon?")
+            
+            if (this.Logger != "") {
+                this.Logger.Log("Запрос подтверждения: " . Question . ", Ответ: " . (Result = "Yes" ? "Да" : "Нет"))
+            }
+            
+            return Result = "Yes"
+        } catch as e {
+            if (this.Logger != "") {
+                this.Logger.LogError("Ошибка при запросе подтверждения: " . e.Message)
+            }
+            return false
+        }
     }
 }
