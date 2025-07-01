@@ -1,0 +1,10 @@
+Hello
+World
+AutoHotkey
+Script
+Processor
+Example
+Test
+Message
+Sample
+Text
