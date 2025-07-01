@@ -7,96 +7,150 @@
 
 class FileManager {
     __New() {
-        this.WordFile := "words.txt"
-        this.UsedWordsFile := "used_words.txt"
+        this.WordFile := A_ScriptDir . "\words.txt"
+        this.UsedWordsFile := A_ScriptDir . "\used_words.txt"
     }
     
-    ; Запись файла с UTF-8 BOM
-    WriteFileUTF8BOM(FileName, Content) {
+    ; Запись в файл с кодировкой UTF-8 с BOM
+    WriteFileUTF8BOM(FilePath, Content) {
         try {
-            FileObj := FileOpen(FileName, "w", "UTF-8")
-            if (FileObj) {
-                FileObj.Write(Content)
-                FileObj.Close()
-                return true
+            FileObj := FileOpen(FilePath, "w", "UTF-8-RAW")
+            if !IsObject(FileObj) {
+                throw Error("Не удалось открыть файл для записи: " . FilePath)
             }
-            return false
-        } catch {
-            return false
-        }
-    }
-    
-    ; Чтение файла с UTF-8 BOM
-    ReadFileUTF8BOM(FileName) {
-        try {
-            if !FileExist(FileName)
-                return ""
             
-            FileObj := FileOpen(FileName, "r", "UTF-8")
-            if (FileObj) {
-                Content := FileObj.Read()
-                FileObj.Close()
-                return Content
+            ; Записываем BOM для UTF-8
+            FileObj.WriteUInt(0xBFBBEF, 1)
+            
+            ; Записываем содержимое
+            FileObj.Write(Content)
+            FileObj.Close()
+            return true
+        } catch as e {
+            return false
+        }
+    }
+    
+    ; Чтение из файла с кодировкой UTF-8 с BOM
+    ReadFileUTF8BOM(FilePath) {
+        try {
+            if !FileExist(FilePath) {
+                return ""
             }
-            return ""
-        } catch {
+            
+            FileObj := FileOpen(FilePath, "r", "UTF-8-RAW")
+            if !IsObject(FileObj) {
+                throw Error("Не удалось открыть файл для чтения: " . FilePath)
+            }
+            
+            ; Пропускаем BOM, если он есть
+            if (FileObj.Length >= 3) {
+                BOM := FileObj.ReadUInt(1)
+                if (BOM = 0xBFBBEF) {
+                    ; BOM найден, пропускаем его
+                } else {
+                    ; BOM не найден, возвращаемся в начало файла
+                    FileObj.Pos := 0
+                }
+            }
+            
+            ; Читаем содержимое
+            Content := FileObj.Read()
+            FileObj.Close()
+            return Content
+        } catch as e {
             return ""
         }
     }
     
-    ; Добавление в файл с UTF-8 BOM
-    AppendFileUTF8BOM(FileName, Content) {
+    ; Добавление в файл с кодировкой UTF-8 с BOM
+    AppendFileUTF8BOM(FilePath, Content) {
         try {
-            ExistingContent := this.ReadFileUTF8BOM(FileName)
-            NewContent := ExistingContent . Content
-            return this.WriteFileUTF8BOM(FileName, NewContent)
-        } catch {
+            if !FileExist(FilePath) {
+                return this.WriteFileUTF8BOM(FilePath, Content)
+            }
+            
+            ExistingContent := this.ReadFileUTF8BOM(FilePath)
+            return this.WriteFileUTF8BOM(FilePath, ExistingContent . Content)
+        } catch as e {
             return false
         }
     }
     
     ; Загрузка массива из файла
-    LoadArrayFromFile(FileName) {
-        arr := []
-        if !FileExist(FileName)
-            return arr
+    LoadArrayFromFile(FilePath) {
+        try {
+            if !FileExist(FilePath) {
+                return []
+            }
             
-        Content := this.ReadFileUTF8BOM(FileName)
-        for line in StrSplit(Content, "`n", "`r") {
-            line := Trim(line)
-            if (line != "")
-                arr.Push(line)
+            Content := this.ReadFileUTF8BOM(FilePath)
+            if (Content = "") {
+                return []
+            }
+            
+            ; Разделяем по строкам и удаляем пустые строки
+            Lines := StrSplit(Content, "`n", "`r")
+            Result := []
+            
+            for Line in Lines {
+                if (Line != "") {
+                    Result.Push(Line)
+                }
+            }
+            
+            return Result
+        } catch as e {
+            return []
         }
-        return arr
     }
     
     ; Сохранение массива в файл
-    SaveArrayToFile(FileName, Array) {
-        Content := ""
-        for item in Array
-            Content .= item "`n"
-        return this.WriteFileUTF8BOM(FileName, Content)
+    SaveArrayToFile(FilePath, Array) {
+        try {
+            Content := ""
+            for Item in Array {
+                Content .= Item . "`n"
+            }
+            
+            return this.WriteFileUTF8BOM(FilePath, Content)
+        } catch as e {
+            return false
+        }
     }
     
-    ; Перемещение слова из words.txt в used_words.txt
+    ; Перемещение слова в used_words.txt
     MoveWordToUsed(Word) {
-        return this.AppendFileUTF8BOM(this.UsedWordsFile, Word "`n")
+        try {
+            return this.AppendFileUTF8BOM(this.UsedWordsFile, Word . "`n")
+        } catch as e {
+            return false
+        }
     }
     
     ; Восстановление words.txt из used_words.txt
     RestoreWords() {
-        if !FileExist(this.UsedWordsFile)
-            return false
+        try {
+            if !FileExist(this.UsedWordsFile) {
+                return false
+            }
             
-        UsedWords := this.ReadFileUTF8BOM(this.UsedWordsFile)
-        
-        if FileExist(this.WordFile) {
-            this.AppendFileUTF8BOM(this.WordFile, UsedWords)
-        } else {
-            this.WriteFileUTF8BOM(this.WordFile, UsedWords)
+            ; Загружаем использованные слова
+            UsedWords := this.LoadArrayFromFile(this.UsedWordsFile)
+            
+            if (UsedWords.Length = 0) {
+                return false
+            }
+            
+            ; Сохраняем их в words.txt
+            this.SaveArrayToFile(this.WordFile, UsedWords)
+            
+            ; Очищаем used_words.txt
+            this.WriteFileUTF8BOM(this.UsedWordsFile, "")
+            
+            return true
+        } catch as e {
+            return false
         }
-        
-        this.WriteFileUTF8BOM(this.UsedWordsFile, "")
-        return true
     }
 }
